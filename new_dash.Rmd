@@ -1,0 +1,487 @@
+---
+title: "Implication de mineurs dans des affaires judiciaires"
+output: html_document
+runtime : shiny
+---
+
+**Introduction**
+Le sujet porte sur l'implication de mineurs dans des affaires judiciaires. Nous avons choisi de traiter ce sujet dans le cadre des Etats-Unis car leur législation nous permet d'avoir accès à un plus grand nombre de catégories de données que celle de la France.
+Ce sujet, en plus d'être intéressant à traiter, nous permet de se familiariser avec le langage R.
+Les jeux de données sont disponibles sur https://www.ojjdp.gov/ojstatbb/compendium/ (ICPSR) et  Kaggle.
+
+
+
+```{r}
+list.of.packages <- c("plyr", "ggplot2", "dplyr", "lubridate", "leaflet", "tigris", "shiny")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+
+library(plyr)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(leaflet)
+library(tigris)
+library(shiny)
+library(tidyr)
+```
+
+```{r}
+#commandes a pas oublier pour nettoyer dataset
+df_child<-read.csv("new_data.csv",na.strings=c('99999','99998'),stringsAsFactors = FALSE)
+colnames(df_child)[colnames(df_child)=="STNAME"]<-"NAME"
+#supprime les lignes ou les mineurs ne sont pas impliqués
+df_child1<- filter_at(df_child,vars(-COUNTY,-OFFENSE,-NAME,-YEAR),any_vars(!is.na(.)))
+df_child1<-replace(df_child1,is.na(df_child1),0)
+df_child1$NAME[df_child1$NAME=="ALA"]<-"AL"
+df_child1$NAME[df_child1$NAME=="ALASKA"]<-"AK"
+df_child1$NAME[df_child1$NAME=="ARIZ"]<-"AZ"
+df_child1$NAME[df_child1$NAME=="ARK"]<-"AR"
+df_child1$NAME[df_child1$NAME=="CALIF"]<-"CA"
+df_child1$NAME[df_child1$NAME=="COLO"]<-"CO"
+df_child1$NAME[df_child1$NAME=="CONN"]<-"CT"
+df_child1$NAME[df_child1$NAME=="DEL"]<-"DE"
+df_child1$NAME[df_child1$NAME=="D C"]<-"DC"
+df_child1$NAME[df_child1$NAME=="HAWAII"]<-"HI"
+df_child1$NAME[df_child1$NAME=="IDAHO"]<-"ID"
+df_child1$NAME[df_child1$NAME=="ILL"]<-"IL"
+df_child1$NAME[df_child1$NAME=="IND"]<-"IN"
+df_child1$NAME[df_child1$NAME=="IOWA"]<-"IA"
+df_child1$NAME[df_child1$NAME=="KANS"]<-"KS"
+df_child1$NAME[df_child1$NAME=="MAINE"]<-"ME"
+df_child1$NAME[df_child1$NAME=="MD"]<-"MD"
+df_child1$NAME[df_child1$NAME=="MASS"]<-"MA"
+df_child1$NAME[df_child1$NAME=="MISS"]<-"MS"
+df_child1$NAME[df_child1$NAME=="MO"]<-"MO"
+df_child1$NAME[df_child1$NAME=="MONT"]<-"MT"
+df_child1$NAME[df_child1$NAME=="MICH"]<-"MI"
+df_child1$NAME[df_child1$NAME=="NEBR"]<-"NE"
+df_child1$NAME[df_child1$NAME=="NEV"]<-"NV"
+df_child1$NAME[df_child1$NAME=="N MEX"]<-"NM"
+df_child1$NAME[df_child1$NAME=="N H"]<-"NH"
+df_child1$NAME[df_child1$NAME=="N C"]<-"NC"
+df_child1$NAME[df_child1$NAME=="N DAK"]<-"ND"
+df_child1$NAME[df_child1$NAME=="N J"]<-"NJ"
+df_child1$NAME[df_child1$NAME=="N M"]<-"NM"
+df_child1$NAME[df_child1$NAME=="N Y"]<-"NY"
+df_child1$NAME[df_child1$NAME=="OHIO"]<-"OH"
+df_child1$NAME[df_child1$NAME=="OKLA"]<-"OK"
+df_child1$NAME[df_child1$NAME=="OREG"]<-"OR"
+df_child1$NAME[df_child1$NAME=="R I"]<-"RI"
+df_child1$NAME[df_child1$NAME=="S C"]<-"SC"
+df_child1$NAME[df_child1$NAME=="S DAK"]<-"SD"
+df_child1$NAME[df_child1$NAME=="TENN"]<-"TN"
+df_child1$NAME[df_child1$NAME=="TEXAS"]<-"TX"
+df_child1$NAME[df_child1$NAME=="UTAH"]<-"UT"
+df_child1$NAME[df_child1$NAME=="WASH"]<-"WA"
+df_child1$NAME[df_child1$NAME=="W VA"]<-"WV"
+df_child1$NAME[df_child1$NAME=="WIS"]<-"WI"
+df_child1$NAME[df_child1$NAME=="WYO"]<-"WY"
+
+#avoir le tableau en long 
+df_child_long=df_child1%>%pivot_longer(c("F0_9","F10_12","F13_14","F15","F16","F17","M0_9","M10_12","M13_14","M15","M16","M17","JA","JB","JH","JI","JN","JW"),names_to="categories",values_to='count')
+```
+
+```{r}
+#taux de pauvreté par etat 
+df_poverty  <- read.csv(file = "PercentagePeopleBelowPovertyLevel.csv", stringsAsFactors = FALSE, header = TRUE, sep = ',', na.strings = c("-"))
+p <- ddply(df_poverty, ~ Geographic.Area, summarize, poverty_mean = mean(poverty_rate, na.rm = TRUE))
+p$Geographic.Area <- factor(p$Geographic.Area, levels = p$Geographic.Area[order(p$poverty_mean, decreasing = TRUE)])
+g1 = ggplot(data = p) +
+        geom_bar(mapping = aes(x = Geographic.Area, y = poverty_mean, color = Geographic.Area, fill = Geographic.Area), stat = "identity") +
+        labs(x = "State",
+             y = "Poverty rate",
+             title = "Moyenne du taux de pauvreté par état") +
+        theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+```{r}
+#compte le nombre d'arrestation par crime pour chaque etat 
+crime_per_state<-df_child1%>%group_by(NAME)%>%dplyr::summarize(arrestation=n())
+
+
+g2=ggplot(data=crime_per_state)+geom_bar(mapping=aes(x=NAME,y=arrestation,color=NAME,fill=NAME),stat="identity")+labs(x="States",y="Nombre d'arrestation",title="Nombre d'arrestation par crime")+theme(plot.title=element_text(hjust=0.5))
+
+```
+
+```{r}
+
+### PARTIE SUR LES ARRESTATIONS DE FILLES MINEURS ###
+
+#on filtre la dataframe d'origine pour pouvoir garder que les colonnes qui concernent les filles 
+df_female<-df_child1[c("F0_9","F10_12","F13_14","F15","F16","F17","OFFENSE","NAME")]
+
+#on supprime les lignes des crimes ou il n'y avait pas de filles impliquées
+df_female<- filter_at(df_female,vars(-OFFENSE,-NAME),any_vars(!is.na(.)))
+
+#on effectue un pivot sur la dataframe pour qu'elle devienne du type "long"
+crime_per_sexe_f=df_female%>%pivot_longer(c("F0_9","F10_12","F13_14","F15","F16","F17"),names_to="categories",values_to='count')
+
+# Dans cette dataframe chaque ligne représente un type de crime différent ou on lui associe le nombre de filles  arretées pour ce crime 
+crime_per_sexe_f<-crime_per_sexe_f%>%group_by(OFFENSE)%>%dplyr::summarize(nb_crime_fille=sum(count))
+
+# dans cette dataframe on enleve les categories qui representent les races 
+sexe_age<-filter(df_child_long,!categories %in% c("JW","JI","JB","JA","JH","JN"))
+
+#nombre d'arrestation par type de crime et par catégorie (cette dataframe va permettre de faire des taux de crimes realisés par catégories par rapport aux nombre totales d'arrestations par type de crime)
+offense<-sexe_age%>%group_by(OFFENSE)%>%dplyr::summarize(arrestations_totale=sum(count))
+
+#creation du taux darrestation de filles 
+crime_per_sexe_f$rate=0
+crime_per_sexe_f<- dplyr::inner_join(crime_per_sexe_f, offense[, c("OFFENSE", "arrestations_totale")])
+crime_per_sexe_f$rate = crime_per_sexe_f$nb_crime_fille / crime_per_sexe_f$arrestations_totale
+
+
+# Graphe représentant le taux de crimes réalisés par des filles  par rapport aux nombres d'arrestations totales pour chaque type de crime
+g3=ggplot(data=crime_per_sexe_f)+geom_bar(mapping=aes(x=OFFENSE,y=rate,color=OFFENSE,fill=OFFENSE),stat="identity")+labs(x="Crime",y="Taux de crime réalisé par des filles  ",title="Graphe representant le taux de crimes effectués par des filles")+theme(plot.title=element_text(hjust=0.5))
+
+```
+
+```{r}
+### PARTIE SUR LES ARRESTATIONS DE GARCONS MINEURS ###
+
+# Nous réalisons exactement les memes opérations que pour la partie sur les filles 
+df_male<-df_child1[c("M0_9","M10_12","M13_14","M15","M16","M17","OFFENSE","NAME")]
+
+df_male<- filter_at(df_male,vars(-OFFENSE,-NAME),any_vars(!is.na(.)))
+
+crime_per_sexe_h=df_male%>%pivot_longer(c("M0_9","M10_12","M13_14","M15","M16","M17"),names_to="categories",values_to='count')
+
+crime_per_sexe_h<-crime_per_sexe_h%>%
+                  group_by(OFFENSE)%>%
+                        dplyr::summarize(nb_crime_garcon=sum(count))
+
+crime_per_sexe_h$rate=0
+crime_per_sexe_h<- dplyr::inner_join(crime_per_sexe_h, offense[, c("OFFENSE", "arrestations_totale")])
+crime_per_sexe_h$rate = crime_per_sexe_h$nb_crime_garcon / crime_per_sexe_h$arrestations_totale
+
+# Graphe représentant le taux de crimes réalisés par des garcons  par rapport aux nombres d'arrestations totales pour chaque type de crime
+
+g4=ggplot(data=crime_per_sexe_h)+geom_bar(mapping=aes(x=OFFENSE,y=rate,color=OFFENSE,fill=OFFENSE),stat="identity")+labs(x="Crime",y="Taux de crimes effectués par des garcons ",title="Graphe representant le taux de crimes réalisés par des garcons pour chaques types de crime")+theme(plot.title=element_text(hjust=0.5))
+
+```
+
+```{r}
+
+## Ici nous modifions les abbréviations des etats par leur nom car sinon ce n'est pas compatible 
+## De plus nous sommes obligés de tout recharger car toutes nos dataframe dependent de la premiere et ne serons pas utilisables
+#modifier le nom des etat pour que ce soit compatible avec la map
+#attention a executé qu'une fois 
+df_child1$NAME <- state.name[match(df_child1$NAME, state.abb)]
+crime_per_state$NAME <- state.name[match(crime_per_state$NAME, state.abb)]
+df_child_long$NAME <- state.name[match(df_child_long$NAME, state.abb)]
+
+```
+
+```{r}
+#dataframe de la population par etat 
+# elle va etre utilisée pour creer notre map de taux
+df_census   <- read.csv(file = "US_census.csv", header = TRUE, sep = ',', stringsAsFactors = FALSE,
+    colClasses = c("NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", NA, NA, "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", "NULL", NA, NA, NA))
+state_pop <- df_census %>%
+    group_by(NAME = STNAME) %>%
+    dplyr::summarise(pop_2016 = sum(POPESTIMATE2016))
+```
+
+```{r} 
+#nombre d'arrestation par sexe et age par etat 
+sexe_age<-filter(df_child_long,!categories %in% c("JW","JI","JB","JA","JH","JN"))
+
+#nombre d'arrestation par categorie par etat 
+nb_crime_cat = df_child_long %>%
+                  group_by(NAME,categories)%>%
+                  dplyr::summarize(arrestation=sum(count))
+
+```
+
+```{r}
+#insertion du taux pour chaque categories
+
+nb_crime_cat$rate=0
+nb_crime_cat<- dplyr::inner_join(nb_crime_cat, state_pop[, c("NAME", "pop_2016")])
+nb_crime_cat$rate = nb_crime_cat$arrestation / nb_crime_cat$pop_2016*10^8
+
+
+#nombre d'arrestation par race pour chaque etat
+race<-filter(df_child_long,!categories %in% c("F0_9","F10_12","F13_14","F15","F16","F17","M0_9","M10_12","M13_14","M15","M16","M17"))
+
+
+#sur chaque ligne de cette dataframe on a le nombre total d'arrestation totale par race
+nb_crime_race=race%>%group_by(categories)%>%dplyr::summarize(arrestation=sum(count))
+
+
+#Graphe representant le nombre de crimes effectués par race 
+g5=ggplot(data=nb_crime_race)+geom_bar(mapping=aes(x=categories,y=arrestation,color=categories,fill=categories),stat="identity")+labs(x="Race",y="Nombre de crime par race",title="Graphe representant le nombre de crimes effectués par race")+theme(plot.title=element_text(hjust=0.5))
+
+#nombre de crime en fonction de leur type par etat 
+typeofcrime_per_state <- ddply(df_child1, c("NAME", "OFFENSE"), dplyr::summarize, arrestations = n())
+
+#Ici on trie dans l'odre decroissant par rapport aux nombre d'arrestations pour pouvoir ensuite afficher en cliquant sur etat de la map les 10 crimes les plus réalisés dans l'etat 
+typeofcrime_per_state<-arrange(typeofcrime_per_state,NAME,desc(arrestations))
+
+#Insertion du taux de criminalité par catégories   par etat 
+typeofcrime_per_state$rate=0
+typeofcrime_per_state<- dplyr::inner_join(typeofcrime_per_state, crime_per_state[, c("NAME","arrestation")])
+colnames(typeofcrime_per_state)[colnames(typeofcrime_per_state)=="arrestation"]<-"arrestations_totales"
+typeofcrime_per_state$rate = typeofcrime_per_state$arrestations / typeofcrime_per_state$arrestations_totales
+
+#insertion du taux de criminalité par etat
+crime_per_state$rate=0
+crime_per_state<- dplyr::inner_join(crime_per_state, state_pop[, c("NAME", "pop_2016")])
+crime_per_state$rate = crime_per_state$arrestation / crime_per_state$pop_2016*10^8
+crime_per_state<-arrange(crime_per_state,desc(rate))
+
+
+#Graphe representant les 10 etats avec les plus hauts taux de criminalité chez les mineurs 
+g6=ggplot(data=crime_per_state[1:10,])+geom_bar(mapping=aes(x=NAME,y=rate,color=NAME,fill=NAME),stat="identity")+labs(x="States",y="Taux de crime par état",title="Graphe representant les 10 états avec le taux d'arrestation de mineurs le plus important")+theme(plot.title=element_text(hjust=0.5))
+```
+
+##########################
+### Donnee pour la map ###
+##########################
+
+**Mise en place des parametres pour Shiny**
+```{r}
+#Creation des donnees geographique pour afficher la carte
+shp <- states(cb = TRUE, resolution = '20m')
+shp <- states(cb = TRUE, resolution = '20m')
+
+#Creation de la palette de couleur pour afficher la carte
+#Utilisation du Log pour pour mieux voir les differences de couleurs
+pal  <- colorNumeric(palette = "YlOrRd", domain = log(seq(1, max(crime_per_state$arrestation))))
+pal1 <- colorNumeric(palette = "YlOrRd", domain = log(seq(1, max(crime_per_state$rate))))
+#Creation d'un fonction mettant en forme le popup afficher quand la
+#souris passe sur un Etat
+labels <- function(NAME, arrestation) {
+    sprintf("<strong>%s</strong><br/><strong>%g</strong> arrestations", NAME, arrestation) %>%
+            lapply(htmltools::HTML)
+}
+labels1 <- function(NAME, rate) {
+    sprintf("<strong>%s</strong><br/><strong>%g</strong> pourcent de la population de cet etat", NAME,rate*10^-8) %>%
+            lapply(htmltools::HTML)
+}
+
+#Creation d'un dictionnaire pour les differentes catégories
+dict_categories<- list(c("F0_9","F10_12","F13_14","F15","F16","F17","M0_9","M10_12","M13_14","M15","M16","M17","JA","JI","JB","JW"),"F0_9","F10_12","F13_14","F15","F16","F17","M0_9","M10_12","M13_14","M15","M16","M17","JA","JI","JB","JW")
+names(dict_categories) <- c("All categories","Filles 0_9 ans ","Filles 10_12 ans ","Filles 13_14 ans ","Filles 15 ans","  Filles 16 ans","  Filles 17 ans","Garcon 0_9 ans ","Garcon 10_12 ans ","Garcon 13_14 ans ","Garcon 15 ans ","Garcon 16 ans ","Garcon 17 ans ","Jeune Asiatique","Jeune Indien","Jeune Noir","Jeune Blanc")
+
+#Creation d'un dictionnaire pour les differentes graph pour shiny
+dict_graph <- list(g1,g2,g3,g4,g5,g6)
+names(dict_graph) <- c("Taux moyen de pauvreté par état",
+                       "Nombre d'arrestation par état",
+                       "Taux de filles impliqués dans différents crimes",
+                       "Taux de garcons impliqués dans différents crimes",
+                       "Nombre de crimes par race",
+                       "10 états avec le plus grand taux d'arrestation de mineurs")
+```
+
+
+**Création du server shiny**
+
+```{r}
+server <- function(input, output, session) {
+     #MAP PRINCIPALE
+    #Jointure des donnees pour associer crime_per_state a chaque polygon
+    shp_state <- reactive({
+        if (input$categories == "All categories") {
+            shp@data <- shp@data %>%
+                dplyr::left_join(crime_per_state,
+                by = "NAME")
+        }
+        else {
+            shp@data <- shp@data %>%
+                dplyr::left_join(nb_crime_cat[nb_crime_cat$categories %in% dict_categories[input$categories],],by="NAME")
+                
+        }
+        shp
+    })
+    # MAP DE TAUX
+    shp_state_rate <- reactive({
+        if (input$categories == "All categories"){
+        shp@data <- shp@data %>%
+                dplyr::left_join(crime_per_state,
+                by = "NAME")
+      }
+      else {
+            shp@data <- shp@data %>%
+                dplyr::left_join(nb_crime_cat[nb_crime_cat$categories %in% dict_categories[input$categories],],by="NAME")
+            print(nb_crime_cat$categories %in% dict_categories[input$categories])
+                
+        }
+        shp
+})
+  # GRAPHE ASSOCIE A CHAQUE ETAT
+   #Affichage du graph selectionne (ici ce sera les 10 crimes les plus realisés dans l'etat selectionné)
+   show_graph <- reactive({
+        dict_graph[input$chosen_graph]
+    })
+
+    #Creation de la base de la map, elle sera reutilise pour afficher les etats
+    #Elle n'est cree qu'une fois
+    output$map <- renderLeaflet({
+        shp %>%
+            leaflet(options = leafletOptions(zoomControl = FALSE)) %>%
+            setView(-92, 38, zoom = 4.499)})
+       
+     output$map_rate <- renderLeaflet({
+        shp %>%
+            leaflet(options = leafletOptions(zoomControl = FALSE)) %>%
+            setView(-92, 38, zoom = 4.499)
+    })
+    #Plotage du nombre d'arrestation par type de crime par etat 
+    output$state_plot <- renderPlot({
+        ggplot(data=typeofcrime_per_state[typeofcrime_per_state$NAME %in%    input$map_shape_click$id,][1:10,])+
+            geom_bar(mapping=aes(x=OFFENSE,y=rate,color=OFFENSE,fill=OFFENSE),stat="identity") +
+            theme(legend.position = "none", plot.title = element_text(hjust = 0.5)) +
+            ggtitle(paste("10 principaux crimes \n for state of", input$map_shape_click$id)) +
+            ylab("Taux par rapport au nombre total d'arrestation dans l'etat") +
+            expand_limits(y = 0) +
+            xlab("Type of crime")
+    })
+
+    #Affichage du graph selectione
+    output$g_plot <- renderPlot({
+        show_graph()
+        })
+
+    #Met a jour la map principale
+    observe({
+        output$title <- renderUI({
+            paste("Map of ", input$categories,"in 2016")
+        })
+        leafletProxy("map", data = shp_state()) %>%
+        clearShapes() %>%
+        #Modifie les couleurs de chaque Etats
+        addPolygons(
+            fillColor = ~pal(log(arrestation)),
+            fillOpacity = 1,
+            weight = 2,
+            dashArray = "3",
+            opacity = 1,
+            color = "white",
+            layerId = shp@data$NAME,
+            label = ~labels(NAME, arrestation),
+            highlight = highlightOptions(
+                weight = 6,
+                color = "white"),
+            labelOptions = labelOptions(
+                style = list("font-weight" = "normal", padding = "3px 8px"),
+                textsize = "15px",
+                direction = "auto"))
+
+        
+    })
+    observe({
+        output$title_rate <- renderUI({
+            paste("Map of rate of ",input$categories,"in 2016")
+        })
+        leafletProxy("map_rate", data = shp_state_rate()) %>%
+            addPolygons(
+                fillColor = ~pal1(log(rate)),
+                fillOpacity = 1,
+                weight = 2,
+                dashArray = "3",
+                opacity = 1,
+                color = "white",
+                layerId = shp@data$NAME,
+                label = ~labels1(NAME,rate),
+                highlight = highlightOptions(
+                    weight = 6,
+                    color = "white"),
+                labelOptions = labelOptions(
+                    style = list("font-weight" = "normal", padding = "3px 8px"),
+                    textsize = "15px",
+                    direction = "auto"))
+        })
+    
+   
+}
+```
+
+**Création de l'interface utilisateur shiny**
+
+```{r}
+ui <- navbarPage("Children arrestations in the US", id = "map_us",
+  
+  #Création du premier onglet
+  tabPanel("Interactive map",
+    div(class = "outer",
+        tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
+        tags$head(includeCSS("style.css")),
+        #Sortie principale
+        leafletOutput("map", width = "100%", height = "100%"),
+        absolutePanel(
+            top = 100,
+            right = 10,
+            uiOutput("title"),
+            selectInput(inputId = "categories",
+                label = "Select categories to display :",
+                choices = c("All categories","Filles 0_9 ans ","Filles 10_12 ans ","Filles 13_14 ans ","Filles 15 ans","  Filles 16 ans","  Filles 17 ans","Garcon 0_9 ans ","Garcon 10_12 ans ","Garcon 13_14 ans ","Garcon 15 ans ","Garcon 16 ans ","Garcon 17 ans ","Jeune Asiatique","Jeune Indien","Jeune Noir","Jeune Blanc"),
+                selected = "All categories",
+                width = "300"
+                )
+        ),
+        #Création du box pour afficher le graphe par Etat
+        absolutePanel(id = "graph",
+            class = "panel panel-default",
+            fixed = TRUE,
+            draggable = TRUE,
+            top = "auto", right = "1", bottom = "1",
+            width = "auto", height = "auto",
+            plotOutput("state_plot", height = 300, width = 300)
+            )
+        )
+    ),
+    #Creation du deuxieme onglet 
+   tabPanel("Interactive map of rate",
+        div(class = "outer",
+            tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
+            tags$head(includeCSS("style.css")),
+            leafletOutput("map_rate", width = "100%", height = "100%"),
+            absolutePanel(
+                top = 20,
+                right = 10,
+                uiOutput("title_rate")
+                )
+                )
+      ),
+                
+   #Création du troisieme onglet
+    tabPanel("Graphes",
+        selectInput(inputId = "chosen_graph",
+                label = "Choose the grap you want to display :",
+                choices = names(dict_graph),
+                selected = names(dict_graph)[1]
+                ),
+        plotOutput("g_plot", height = "800px")
+    )
+)
+```
+
+**Lancement de l'application shiny**
+
+```{r}
+shinyApp(ui, server, options = list(height = 700, width = 1000))
+
+```
+
+**Conclusion**
+**Nombre d'arrestations par état**
+Les Etats où le nombre de mineurs arrêtés est le plus important sont la Californie, le Texas, le Wisconsin et la Pennsylvanie. La Californie et le Texas sont les deux états les plus peuplés des Etats-Unis et la Pennsylvanie est le 6e. Cela peut expliquer ces chiffres.
+
+**Taux de filles impliquées dans des crimes**
+On remarque ici que les filles sont plus impliquées que les garçons dans deux types de crimes seulements : la prostitution et le vice commercial d'une part, et le délit de fuite d'autre part. Ce sont les deux crimes dans lesquelles les filles sont le plus impliquées.
+
+**Taux de garçons impliqués dans des crimes**
+Là où le taux de garçons impliqués dans des affaires judiciaires est le plus élevé se trouve être le bookmaking : les paris d'argent. Le deuxième crime majoritairement commis par des garçons se trouve être le viol. On remarque plus globalement que les affaires judiciaires concernent plus majoritairement les garçons que les filles.
+
+**Nombres de crimes effectués en fonction de la race**
+L'étude des données révèle que les mineurs blancs sont le plus impliqués dans des affaires judiciaires à hauteur de 60.000 environ puis que ce seraient les mineurs noirs à hauteur de 30.000 environ. Les autres ethnies sont beaucoup moins impliquées dans les affaires. Cela s'explique par la densité de population des différentes ethnies: la population blanche représentant la plus grande partie de la population américaine et la population noire représentant une autre grande partie toutefois moins importante.
+
+**Taux de crimes par état**
+Les états dont le taux de crime est le plus important sont le Wyoming, le Montana et l'Idaho. Ce sont des états peu peuplés du Nord-Ouest des Etats-Unis. On remarque que les états les plus peuplés ne font pas partie des états dont le taux de crimes est le plus important.
+
+**Conclusion**
+Ce projet nous a permit de développer notre maîtrise d'un nouveau langage: R. En plus de cela, nous avons découvert des données intéressantes que nous avons pu exploiter en faisant des graphiques et un dashboard.
+
